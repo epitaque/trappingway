@@ -43,38 +43,40 @@ pub enum Role {
     Healer
 }
 
+#[derive(Debug)]
 pub struct PFListing {
     pub title: String,
     pub author: String,
+    pub flags: String,
     pub description: String,
     pub slots: Vec<Slot>,
-    pub time_remaining: u32,
-    pub min_ilvl: u32,
+    pub time_remaining: String,
+    pub min_ilvl: String,
     pub data_center: String,
     pub pf_category: String
 }
 
 #[derive(Debug)]
 pub struct Slot {
-    pub available_roles: Vec<Job>,
+    pub available_jobs: Vec<Job>,
     pub filled: bool,
 }
 
 impl Slot {   
     pub fn to_string(&self) -> String {
         // We don't want to disclose the secret
-        format!("Slot({:#?}, {})", &self.available_roles, &self.filled)
+        format!("Slot({:#?}, {})", &self.available_jobs, &self.filled)
     }
     pub fn get_emoji_string(&self) -> String {
         if self.filled {
-            match self.available_roles.first() {
+            match self.available_jobs.first() {
                 Some(x) => x.get_emoji_string(),
                 None => "".to_string()
             }
         } else {
-            let contains_tank = self.available_roles.iter().any(|x| x.get_role() == Role::Tank);
-            let contains_healer = self.available_roles.iter().any(|x| x.get_role() == Role::Healer);
-            let contains_dps = self.available_roles.iter().any(|x| x.get_role() == Role::DPS);
+            let contains_tank = self.available_jobs.iter().any(|x| x.get_role() == Role::Tank);
+            let contains_healer = self.available_jobs.iter().any(|x| x.get_role() == Role::Healer);
+            let contains_dps = self.available_jobs.iter().any(|x| x.get_role() == Role::DPS);
 
             if contains_tank && contains_healer && contains_dps {
                 "<:tankhealerdps:985322491398459482>".to_string()
@@ -214,7 +216,7 @@ impl FromStr for Job {
             "DRG"  => Ok(Job::Dragoon),
             "LNC"  => Ok(Job::Lancer),
             "NIN"  => Ok(Job::Ninja),
-            "ROG"  => Ok(Job::Warrior),
+            "ROG"  => Ok(Job::Rogue),
             "SAM"  => Ok(Job::Samurai),
             "RPR"  => Ok(Job::Reaper),
             "BRD"  => Ok(Job::Bard),
