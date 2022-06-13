@@ -235,3 +235,13 @@ impl FromStr for Job {
         }
     }
 }
+
+pub fn get_color_from_duty(duty_name: &str) -> u32 {
+    match duty_name {
+        "The Unending Coil of Bahamut (Ultimate)" => 0xfce100,
+        "The Weapon's Refrain (Ultimate)" => 0x008bfc,
+        "The Epic of Alexander (Ultimate)" => 0xfcaa00,
+        "Dragonsong's Reprise (Ultimate)" =>  0xf12916,
+        _ =>  0xf0a057
+    }
+}
