@@ -1,17 +1,19 @@
 mod xiv_util;
 mod scraper_util;
 
-use std::{time::Duration, sync::Mutex};
+use std::{time::Duration, sync::Mutex, sync::Arc};
 use tokio::{task, time};
 use poise::serenity_prelude as serenity;
 use futures::{Stream, StreamExt};
 use poise::command;
+use crate::serenity::http::Http;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
+
 // User data, which is stored and accessible in all command invocations
 struct Data {
-    database: sqlx::SqlitePool,
+    database:sqlx::SqlitePool,
     pf_listings: Mutex<Vec<xiv_util::PFListing>>
 }
 
@@ -51,35 +53,32 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     embed
 }
 
-#[command(slash_command, owners_only, hide_in_help)]
-async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
-    println!("update_messages called.");
-    let initial_message = ctx.say("Updatings messages...").await;
-
+async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<u32, Error> {
+    println!("update_messages_rustfn_aux called.");
     let messages = sqlx::query!("SELECT message_id, channel_id, guild_id, data_center, duty_name FROM messages")
-        .fetch_all(&ctx.data().database)
+        .fetch_all(&data.database)
         .await
         .unwrap();
     let mut update_count = 0;
 
     for message_row in messages {
         let message_id_str = message_row.message_id.unwrap();
-        let message_id = message_id_str.parse::<u64>().expect("Unable to parse channel id");
-        let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
+        let message_id = message_id_str.parse::<u64>().expect("Unable to parse channel id");        let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
 
         let data_center = message_row.data_center;
         let duty_name = message_row.duty_name;
 
-        let message_result = ctx.discord().http.get_message(channel_id, message_id).await;
+        let message_result = http.get_message(channel_id, message_id).await;
+
 
         match message_result {
             Ok(mut message) => {
                 let embed = {
-                    let pf_listings = ctx.data().pf_listings.lock().unwrap();
+                    let pf_listings = data.pf_listings.lock().unwrap();
                     let filtered_listings = pf_listings.iter().filter(|x| x.data_center == data_center && x.title == duty_name).collect();
                     get_embed(data_center, duty_name, filtered_listings)
                 };
-                let result = message.edit(&ctx.discord().http, |m| m.set_embed(embed)).await;
+                let result = message.edit(&http, |m| m.set_embed(embed)).await;
                 match result {
                     Ok(_a) => { println!("Successfully edited message."); }
                     Err(e) => { println!("Error editing message: {}.", e); }
@@ -90,14 +89,26 @@ async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
             Err(e) => {
                 println!("Couldn't find message for data center {} duty {}, so removing from DB.", &data_center, &duty_name);
                 sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
-                    .fetch_all(&ctx.data().database)
+                    .fetch_all(&data.database)
                     .await;
                 ()
             }
         }
-
     }
 
+    Ok(update_count)
+}
+
+async fn update_messages_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>, http: std::sync::Arc<Http>) -> Result<u32, Error> {
+    println!("update_messages_rustfn called.");
+    update_messages_rustfn_aux(framework.user_data().await, http).await
+}
+
+#[command(slash_command, owners_only, hide_in_help)]
+async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
+    println!("update_messages called.");
+    let initial_message = ctx.say("Updating messages...").await;
+    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http)).await?;
     initial_message.unwrap().edit(ctx, |x| x.content(format!("Updated {} messages.", update_count))).await;
     Ok(())
 }
@@ -160,10 +171,9 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(slash_command, owners_only, hide_in_help)]
-async fn update_xivpfs(ctx: Context<'_>) -> Result<(), Error> {
-    let initial_message = ctx.say(format!("Updating xivpfs...")).await;
-    println!("Update xivpfs called.");
+
+async fn update_xivpfs_rustfn_aux(data: &Data) -> Result<(), Error> {
+    println!("update_xivpfs_rustfn_aux called.");
     let html = reqwest::get("https://xivpf.com/listings")
         .await?
         .text()
@@ -171,8 +181,21 @@ async fn update_xivpfs(ctx: Context<'_>) -> Result<(), Error> {
 
 
     let listings = scraper_util::get_listings(html);
-    
-    *ctx.data().pf_listings.lock().unwrap() = listings;
+    *data.pf_listings.lock().unwrap() = listings;
+    Ok(())
+}
+
+
+async fn update_xivpfs_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>) -> Result<(), Error> {
+    println!("update_xivpfs_rustfn called.");
+    update_xivpfs_rustfn_aux(framework.user_data().await).await?;
+    Ok(())
+}
+
+#[poise::command(slash_command, owners_only, hide_in_help)]
+async fn update_xivpfs(ctx: Context<'_>) -> Result<(), Error> {
+    let initial_message = ctx.say(format!("Updating xivpfs...")).await;
+    update_xivpfs_rustfn_aux(&ctx.data()).await?;
     Ok(())
 }
 
@@ -193,105 +216,44 @@ async fn init_bot() {
 
     let bot = Data {
         database,
-        pf_listings
+        pf_listings    
     };
 
+    let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
+    let token_2 = token.to_string();
 
     let framework = poise::Framework::build()
         .options(poise::FrameworkOptions {
             commands: vec![display_xivpfs(), register(), update_messages(), update_xivpfs()],
             ..Default::default()
         })
-        .token(std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN"))
+        .token(token)
         .intents(serenity::GatewayIntents::non_privileged())
         .user_data_setup(move |_ctx, _ready, _framework| Box::pin(async move {
-
-
-
+                
             Ok(bot) 
-        }));
+        })).build().await.expect("Unable to initialize framework");
 
-    framework.run().await.unwrap();
+
+    let cloned = Arc::clone(&framework);
+
+    task::spawn(async move {
+        let mut interval = time::interval(Duration::from_millis(1*60*1000));
+        let http = Arc::new(serenity::http::Http::new(&token_2));
+
+        loop {
+            interval.tick().await;
+            println!("Update ticked.");
+            update_xivpfs_rustfn(Arc::clone(&framework)).await;
+            update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await;
+        }
+    });
+
+    poise::Framework::start(cloned).await.expect("Unable to start poise framework.");
 }
 
 
 #[tokio::main]
 async fn main() {
-
-    task::spawn(async {
-        let mut interval = time::interval(Duration::from_millis(5*60*1000));
-
-        loop {
-            interval.tick().await;
-            println!("Update ticked.");
-            update_xivpfs();
-            update_messages();
-        }
-    });
-
-
     init_bot().await;
-
-    // let mut delay = time::interval(Duration::from_millis(5000));
-    // delay.tick().await;
-    // update_xivpfs();
-
-    // let forever = task::spawn(async {
-    //     let mut interval = time::interval(Duration::from_millis(60000));
-
-    //     loop {
-    //         interval.tick().await;
-    //         update_xivpfs();
-    //     }
-    // });
-
-    // forever.await;
-
-    // let mut listings = scraper_util::get_sample_listings().await;
-    // let filtered_listings = listings.iter().filter(|x| x.data_center == "Crystal" && x.title == "Dragonsong's Reprise (Ultimate)").collect::<Vec<_>>();
-
-
-    // let forever = task::spawn(async {
-    //     let mut interval = time::interval(Duration::from_millis(1000));
-
-    //     loop {
-    //         interval.tick().await;
-    //         do_something().await;
-    //     }
-    // });
-
-    // forever.await;
-
-
-    // let molisting = listings.drain(0..).filter(|x| x.author == "Karna Masta @ Brynhildr").collect::<Vec<xiv_util::PFListing>>();
-    // println!("{:#?}", filtered_listings);
-
-    // for job in &molisting.first().unwrap().slots[7].available_jobs {
-    //     println!("Job {:#?}", job);
-    //     println!("Role {:#?}", job.get_role());
-    // }
 }
-
-// #[tokio::main]
-// async fn main() {
-//     // let html = reqwest::get("https://bloomberg.com/")
-//     //     .await?
-//     //     .text()
-//     //     .await?;
-//     let html = fs::read_to_string("scrape_example.html").expect("Unable to read");
-//     let listings = get_listings(html);
-//     println!("A listing: {}", listings[0].to_string());
-
-
-
-//     // let forever = task::spawn(async {
-//     //     let mut interval = time::interval(Duration::from_millis(1000));
-
-//     //     loop {
-//     //         interval.tick().await;
-//     //         do_something().await;
-//     //     }
-//     // });
-
-//     // forever.await;
-// }
