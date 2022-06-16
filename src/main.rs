@@ -106,7 +106,7 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
     Ok(1)
 }
 
-async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>, do_async: bool) -> Result<usize, Error> {
+async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<usize, Error> {
     println!("update_messages_rustfn_aux called.");
     let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name FROM messages")
         .fetch_all(&data.database)
@@ -117,17 +117,8 @@ async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>, do_
     let mut sw1 = Stopwatch::start_new();
 
     let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
-
-    if do_async {
-        // futures::future::join_all(messages.iter().map(|message_row| { 
-        //     update_message(message_row, data, Arc::clone(&http)) })).await;
-        futures::future::join_all(messages.iter().map(|message_row| { 
-            update_message(message_row, data, Arc::new(serenity::http::Http::new(&token.to_string()))) })).await;
-
-    } else {
-        for message_row in messages {
-            update_message(&message_row, data, Arc::clone(&http)).await;
-        }
+    for message_row in messages {
+        update_message(&message_row, data, Arc::clone(&http)).await;
     }
 
     println!("Updated {} messages. sw1: {}", update_count, sw1.elapsed_ms());
@@ -137,7 +128,7 @@ async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>, do_
 
 async fn update_messages_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>, http: std::sync::Arc<Http>) -> Result<usize, Error> {
     println!("update_messages_rustfn called.");
-    update_messages_rustfn_aux(framework.user_data().await, http, true).await
+    update_messages_rustfn_aux(framework.user_data().await, http).await
 }
 
 #[command(slash_command, owners_only, hide_in_help)]
@@ -145,25 +136,14 @@ async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
     println!("update_messages called.");
     let initial_message = ctx.say("Updating messages...").await;
     let mut sw = Stopwatch::start_new();
-    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http), true).await?;
+    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http)).await?;
     sw.stop();
     initial_message?.edit(ctx, |x| x.content(format!("Updated {} messages. Async elapsed time: {}", update_count, sw.elapsed_ms()))).await.expect("update_messages Couldn't update intial message");
     Ok(())
 }
 
-#[command(slash_command, owners_only, hide_in_help)]
-async fn update_message_sync(ctx: Context<'_>) -> Result<(), Error> {
-    println!("update_messages called.");
-    let initial_message = ctx.say("Updating messages...").await;
-    let mut sw = Stopwatch::start_new();
-    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http), false).await?;
-    sw.stop();
-    initial_message?.edit(ctx, |x| x.content(format!("Updated {} messages. Sync elapsed time: {}", update_count, sw.elapsed_ms()))).await.expect("update_messages Couldn't update intial message");
-    Ok(())
-}
 
-
-/// Displays your or another user's account creation date
+/// Displays FFXIV party finder listings in a discord message. Updates every 5 minutes.
 #[poise::command(slash_command, owners_only)]
 async fn display_xivpfs(
     ctx: Context<'_>,
@@ -214,12 +194,11 @@ async fn display_xivpfs(
     Ok(())
 }
 
-#[poise::command(prefix_command)]
+#[poise::command(owners_only, prefix_command, hide_in_help)]
 async fn register(ctx: Context<'_>) -> Result<(), Error> {
     poise::builtins::register_application_commands_buttons(ctx).await?;
     Ok(())
 }
-
 
 async fn update_xivpfs_rustfn_aux(data: &Data) -> Result<(), Error> {
     println!("update_xivpfs_rustfn_aux called.");
@@ -285,17 +264,17 @@ async fn init_bot() {
     let cloned = Arc::clone(&framework);
 
 
-    // task::spawn(async move {
-    //     let mut interval = time::interval(Duration::from_millis(1*60*1000));
-    //     let http = Arc::new(serenity::http::Http::new(&token_2));
+    task::spawn(async move {
+        let mut interval = time::interval(Duration::from_millis(5*60*1000));
+        let http = Arc::new(serenity::http::Http::new(&token_2));
 
-    //     loop {
-    //         interval.tick().await;
-    //         println!("Update ticked.");
-    //         update_xivpfs_rustfn(Arc::clone(&framework)).await.expect("Couldn't update_xivpfs_rustfn");
-    //         update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await.expect("Couldn't update_messages_rustfn");
-    //     }
-    // });
+        loop {
+            interval.tick().await;
+            println!("Update ticked.");
+            update_xivpfs_rustfn(Arc::clone(&framework)).await.expect("Couldn't update_xivpfs_rustfn");
+            update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await.expect("Couldn't update_messages_rustfn");
+        }
+    });
 
     poise::Framework::start(cloned).await.expect("Unable to start poise framework.");
 }
