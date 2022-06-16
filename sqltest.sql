@@ -2,12 +2,12 @@ DROP TABLE guilds;
 DROP TABLE messages;
 
 CREATE TABLE guilds (
-    guild_id TEXT PRIMARY KEY,
+    guild_id TEXT PRIMARY KEY NOT NULL,
     guild_name TEXT NOT NULL
 );
 
 CREATE TABLE messages (
-    message_id TEXT PRIMARY KEY,
+    message_id TEXT PRIMARY KEY NOT NULL,
     channel_id TEXT NOT NULL,
     data_center TEXT NOT NULL,
     guild_id TEXT NOT NULL,

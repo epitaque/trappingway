@@ -1,6 +1,7 @@
 mod xiv_util;
 mod scraper_util;
 
+use stopwatch::{Stopwatch};
 use std::{time::Duration, sync::Mutex, sync::Arc};
 use tokio::{task, time};
 use poise::serenity_prelude as serenity;
@@ -53,63 +54,111 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     embed
 }
 
-async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<u32, Error> {
+struct MessageRow {
+    message_id: String,
+    channel_id: String,
+    data_center: String,
+    guild_id: String,
+    duty_name: String
+}
+
+async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sync::Arc<Http>) -> Result<u32, Error> {
+    let mut sw0 = Stopwatch::start_new();
+
+    let message_row = message_row_ref.to_owned();
+    let message_id_str = message_row.message_id.to_string();
+    let message_id = message_id_str.parse::<u64>().expect("Unable to parse channel id");        
+    let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
+
+    let data_center = message_row.data_center.to_string();
+    let duty_name = message_row.duty_name.to_string();
+
+    let message_result = http.get_message(channel_id, message_id).await;
+    sw0.stop();
+
+    match message_result {
+        Ok(mut message) => {
+            let mut sw1 = Stopwatch::start_new();
+            let embed = {
+                let pf_listings = data.pf_listings.lock().unwrap();
+                let filtered_listings = pf_listings.iter().filter(|x| x.data_center == data_center && x.title == duty_name).collect();
+                get_embed(data_center, duty_name, filtered_listings)
+            };
+            sw1.stop();
+            let mut sw2 = Stopwatch::start_new();
+
+            let result = message.edit(&http, |m| m.set_embed(embed)).await;
+            sw2.stop();
+
+
+            match result {
+                Ok(_a) => { println!("Successfully edited message, sw0 time: {}, sw1 time: {}, sw2 time: {}", sw0.elapsed_ms(), sw1.elapsed_ms(), sw2.elapsed_ms()); }
+                Err(e) => { println!("Error editing message: {}.", e); }
+            }
+        }
+        Err(e) => {
+            println!("Error getting message: {}. Couldn't find message for data center {} duty {}, so removing from DB.", e, &data_center, &duty_name);
+            sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
+                .fetch_all(&data.database)
+                .await.expect("Unable to remove that row from DB");
+        }
+    }
+    Ok(1)
+}
+
+async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>, do_async: bool) -> Result<usize, Error> {
     println!("update_messages_rustfn_aux called.");
-    let messages = sqlx::query!("SELECT message_id, channel_id, guild_id, data_center, duty_name FROM messages")
+    let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name FROM messages")
         .fetch_all(&data.database)
         .await
         .unwrap();
-    let mut update_count = 0;
+    let mut update_count = messages.len();
 
-    for message_row in messages {
-        let message_id_str = message_row.message_id.unwrap();
-        let message_id = message_id_str.parse::<u64>().expect("Unable to parse channel id");        let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
+    let mut sw1 = Stopwatch::start_new();
 
-        let data_center = message_row.data_center;
-        let duty_name = message_row.duty_name;
+    let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
 
-        let message_result = http.get_message(channel_id, message_id).await;
+    if do_async {
+        // futures::future::join_all(messages.iter().map(|message_row| { 
+        //     update_message(message_row, data, Arc::clone(&http)) })).await;
+        futures::future::join_all(messages.iter().map(|message_row| { 
+            update_message(message_row, data, Arc::new(serenity::http::Http::new(&token.to_string()))) })).await;
 
-
-        match message_result {
-            Ok(mut message) => {
-                let embed = {
-                    let pf_listings = data.pf_listings.lock().unwrap();
-                    let filtered_listings = pf_listings.iter().filter(|x| x.data_center == data_center && x.title == duty_name).collect();
-                    get_embed(data_center, duty_name, filtered_listings)
-                };
-                let result = message.edit(&http, |m| m.set_embed(embed)).await;
-                match result {
-                    Ok(_a) => { println!("Successfully edited message."); }
-                    Err(e) => { println!("Error editing message: {}.", e); }
-                }
-                update_count = update_count + 1;
-                ()
-            }
-            Err(e) => {
-                println!("Couldn't find message for data center {} duty {}, so removing from DB.", &data_center, &duty_name);
-                sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
-                    .fetch_all(&data.database)
-                    .await;
-                ()
-            }
+    } else {
+        for message_row in messages {
+            update_message(&message_row, data, Arc::clone(&http)).await;
         }
     }
+
+    println!("Updated {} messages. sw1: {}", update_count, sw1.elapsed_ms());
 
     Ok(update_count)
 }
 
-async fn update_messages_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>, http: std::sync::Arc<Http>) -> Result<u32, Error> {
+async fn update_messages_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>, http: std::sync::Arc<Http>) -> Result<usize, Error> {
     println!("update_messages_rustfn called.");
-    update_messages_rustfn_aux(framework.user_data().await, http).await
+    update_messages_rustfn_aux(framework.user_data().await, http, true).await
 }
 
 #[command(slash_command, owners_only, hide_in_help)]
 async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
     println!("update_messages called.");
     let initial_message = ctx.say("Updating messages...").await;
-    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http)).await?;
-    initial_message.unwrap().edit(ctx, |x| x.content(format!("Updated {} messages.", update_count))).await;
+    let mut sw = Stopwatch::start_new();
+    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http), true).await?;
+    sw.stop();
+    initial_message?.edit(ctx, |x| x.content(format!("Updated {} messages. Async elapsed time: {}", update_count, sw.elapsed_ms()))).await.expect("update_messages Couldn't update intial message");
+    Ok(())
+}
+
+#[command(slash_command, owners_only, hide_in_help)]
+async fn update_message_sync(ctx: Context<'_>) -> Result<(), Error> {
+    println!("update_messages called.");
+    let initial_message = ctx.say("Updating messages...").await;
+    let mut sw = Stopwatch::start_new();
+    let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http), false).await?;
+    sw.stop();
+    initial_message?.edit(ctx, |x| x.content(format!("Updated {} messages. Sync elapsed time: {}", update_count, sw.elapsed_ms()))).await.expect("update_messages Couldn't update intial message");
     Ok(())
 }
 
@@ -161,7 +210,7 @@ async fn display_xivpfs(
         }
     };
 
-    initial_message.unwrap().edit(ctx, |x| x.content(response)).await;
+    initial_message.unwrap().edit(ctx, |x| x.content(response)).await.expect("display_xivpfs Couldn't edit initial message.");
     Ok(())
 }
 
@@ -179,7 +228,6 @@ async fn update_xivpfs_rustfn_aux(data: &Data) -> Result<(), Error> {
         .text()
         .await?;
 
-
     let listings = scraper_util::get_listings(html);
     *data.pf_listings.lock().unwrap() = listings;
     Ok(())
@@ -194,7 +242,7 @@ async fn update_xivpfs_rustfn(framework: Arc<poise::Framework<Data, std::boxed::
 
 #[poise::command(slash_command, owners_only, hide_in_help)]
 async fn update_xivpfs(ctx: Context<'_>) -> Result<(), Error> {
-    let initial_message = ctx.say(format!("Updating xivpfs...")).await;
+    ctx.say(format!("Updating xivpfs...")).await?;
     update_xivpfs_rustfn_aux(&ctx.data()).await?;
     Ok(())
 }
@@ -224,30 +272,30 @@ async fn init_bot() {
 
     let framework = poise::Framework::build()
         .options(poise::FrameworkOptions {
-            commands: vec![display_xivpfs(), register(), update_messages(), update_xivpfs()],
+            commands: vec![display_xivpfs(), register()], //update_messages(), update_xivpfs(), update_message_sync()
             ..Default::default()
         })
         .token(token)
         .intents(serenity::GatewayIntents::non_privileged())
         .user_data_setup(move |_ctx, _ready, _framework| Box::pin(async move {
-                
             Ok(bot) 
         })).build().await.expect("Unable to initialize framework");
 
 
     let cloned = Arc::clone(&framework);
 
-    task::spawn(async move {
-        let mut interval = time::interval(Duration::from_millis(1*60*1000));
-        let http = Arc::new(serenity::http::Http::new(&token_2));
 
-        loop {
-            interval.tick().await;
-            println!("Update ticked.");
-            update_xivpfs_rustfn(Arc::clone(&framework)).await;
-            update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await;
-        }
-    });
+    // task::spawn(async move {
+    //     let mut interval = time::interval(Duration::from_millis(1*60*1000));
+    //     let http = Arc::new(serenity::http::Http::new(&token_2));
+
+    //     loop {
+    //         interval.tick().await;
+    //         println!("Update ticked.");
+    //         update_xivpfs_rustfn(Arc::clone(&framework)).await.expect("Couldn't update_xivpfs_rustfn");
+    //         update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await.expect("Couldn't update_messages_rustfn");
+    //     }
+    // });
 
     poise::Framework::start(cloned).await.expect("Unable to start poise framework.");
 }

@@ -62,6 +62,7 @@ pub struct Slot {
     pub filled: bool,
 }
 
+#[allow(dead_code)]
 impl Slot {   
     pub fn to_string(&self) -> String {
         // We don't want to disclose the secret
@@ -148,6 +149,7 @@ impl Job {
     }
 }
 
+#[allow(dead_code)]
 impl PFListing {       
     pub fn to_string(&self) -> String {
         // We don't want to disclose the secret
