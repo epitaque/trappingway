@@ -34,7 +34,15 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     let mut embed = serenity::builder::CreateEmbed::default();
     embed.color(xiv_util::get_color_from_duty(&duty_name));
     embed.title(format!("{} - {}", duty_name, data_center));
-    for listing in listings.iter().take(15) {
+    let max_to_take = 10i32;
+    let not_taken = std::cmp::max(0, (listings.len() as i32) - max_to_take);
+    let mut already_seen_authors: Vec<String> = Vec::new();
+
+    for listing in listings.iter().take(max_to_take as usize) {
+        if already_seen_authors.contains(&listing.author) {
+            continue
+        }
+        already_seen_authors.push(listing.author.to_string());
         if listing.slots.len() == 0 || listing.slots.iter().any(|x| x.available_jobs.len() == 0) {
             continue
         }
@@ -48,12 +56,25 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
             embed.field(&listing.flags, &listing.description, true);
         }
 
-        embed.field("\u{200b}", '\u{200b}', true);
+        // embed.field("\u{200b}", "\u{200b}", true);
+        embed.field(format!("<:ffxivstopwatch:987141580869730324> {}", listing.last_updated), format!("<:ffxivhourglass:987141579879878676> {}", listing.expires_in), true);
+    }
+
+    if listings.len() == 0 {
+        embed.description("No listings at this time.");
+        let mut footer = serenity::builder::CreateEmbedFooter::default();
+        footer.text("Or, there are listings but people on this data center don't have the Remote Party Finder dalamud plugin.");
+        embed.set_footer(footer);
+    }
+
+    if not_taken > 0 {
+        embed.field("\u{200b}", format!("[{} {} listing{} not shown.](https://xivpf.com/listings)", not_taken, duty_name, if not_taken == 1 {""} else {"s"}), false);
     }
 
     embed
 }
 
+#[allow(dead_code)]
 struct MessageRow {
     message_id: String,
     channel_id: String,
@@ -112,13 +133,12 @@ async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> 
         .fetch_all(&data.database)
         .await
         .unwrap();
-    let mut update_count = messages.len();
+    let update_count = messages.len();
 
-    let mut sw1 = Stopwatch::start_new();
+    let sw1 = Stopwatch::start_new();
 
-    let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
     for message_row in messages {
-        update_message(&message_row, data, Arc::clone(&http)).await;
+        update_message(&message_row, data, Arc::clone(&http)).await?;
     }
 
     println!("Updated {} messages. sw1: {}", update_count, sw1.elapsed_ms());

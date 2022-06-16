@@ -50,7 +50,8 @@ pub struct PFListing {
     pub flags: String,
     pub description: String,
     pub slots: Vec<Slot>,
-    pub time_remaining: String,
+    pub last_updated: String,
+    pub expires_in: String,
     pub min_ilvl: String,
     pub data_center: String,
     pub pf_category: String
@@ -148,16 +149,6 @@ impl Job {
         }
     }
 }
-
-#[allow(dead_code)]
-impl PFListing {       
-    pub fn to_string(&self) -> String {
-        // We don't want to disclose the secret
-        format!("PFListing(Title {}, Author {}, Description {}, Slots {:#?}, Time remaining: {}, Min ILVL: {})", 
-            &self.title, &self.author, &self.description, &self.slots, &self.time_remaining, &self.min_ilvl)
-    }
-}
-
 
 impl fmt::Display for Job {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
