@@ -164,8 +164,8 @@ async fn display_xivpfs(
     #[description = "Duty"] #[autocomplete = "autocomplete_duty"] duty_name: String,
 ) -> Result<(), Error> {
     let initial_message = ctx.say(format!("Adding PF listings display...")).await;
-
-    println!("display_xivpfs called. player name: {}, duty_name: {}, guild name: {}", ctx.author().name, duty_name, channel.guild().unwrap().name );
+    let author_name = &ctx.author().name.to_string();
+    println!("display_xivpfs called, author: {}", author_name);
 
     let response = match channel.guild() {
         Some(guild_channel) => {
@@ -176,6 +176,7 @@ async fn display_xivpfs(
                 // guild_channel.say(ctx.discord().http.as_ref(), get_message(datacenter).await).await?;
                 let guild_name = ctx.guild().unwrap().name;
                 let guild_id = ctx.guild_id().unwrap().0.to_string();
+                println!("display_xivpfs player name: {}, duty_name: {}, guild name: {}", guild_name, duty_name, author_name);
                 sqlx::query!("INSERT OR IGNORE INTO guilds(guild_id, guild_name) VALUES(?, ?)", guild_id, guild_name)
                     .fetch_all(&ctx.data().database)
                     .await
