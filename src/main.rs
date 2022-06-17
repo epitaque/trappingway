@@ -165,6 +165,8 @@ async fn display_xivpfs(
 ) -> Result<(), Error> {
     let initial_message = ctx.say(format!("Adding PF listings display...")).await;
 
+    println!("display_xivpfs called. player name: {}, duty_name: {}, guild name: {}", ctx.author().name, duty_name, channel.guild().unwrap().name );
+
     let response = match channel.guild() {
         Some(guild_channel) => {
             if guild_channel.kind.name() != "text" {
