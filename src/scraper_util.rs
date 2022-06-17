@@ -15,7 +15,7 @@ pub fn get_listings<'a>(html: String) -> Vec<xiv_util::PFListing> {
 
     let elements = document.select(&listing_selector);
 
-    elements.map(|element| {
+    let mut listings = elements.map(|element| {
         let title = element.select(&Selector::parse(".duty").unwrap()).next().ok_or(SimpleError::new("parse error"))?.text().next().ok_or(SimpleError::new("parse error"))?.to_owned();
         let author = element.select(&Selector::parse(".creator .text").unwrap()).next().ok_or(SimpleError::new("parse error"))?.text().next().ok_or(SimpleError::new("parse error"))?.to_owned();
         let flags = match element.select(&Selector::parse(".description span").unwrap()).next() {
@@ -53,7 +53,20 @@ pub fn get_listings<'a>(html: String) -> Vec<xiv_util::PFListing> {
             data_center,
             pf_category
         })
-    }).filter_map(|w: Result<xiv_util::PFListing, SimpleError>| w.ok()).collect::<Vec<_>>()
+    }).filter_map(|w: Result<xiv_util::PFListing, SimpleError>| w.ok()).collect::<Vec<_>>();
+    listings.sort_by(|a, b| b.flags.len().partial_cmp(&a.flags.len()).unwrap());
+
+    let mut already_seen_authors: Vec<String> = Vec::new();
+    let mut result = Vec::new();
+    for listing in listings {
+        if already_seen_authors.contains(&listing.author) {
+            continue
+        }
+        already_seen_authors.push(listing.author.to_string());
+        result.push(listing)
+    }
+
+    result
 }
 
 pub async fn get_sample_listings() -> Vec<xiv_util::PFListing> {

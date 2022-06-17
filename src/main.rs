@@ -34,19 +34,11 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     let mut embed = serenity::builder::CreateEmbed::default();
     embed.color(xiv_util::get_color_from_duty(&duty_name));
     embed.title(format!("{} - {}", duty_name, data_center));
-    let max_to_take = 10i32;
+    let max_to_take = std::env::var("MAX_LISTINGS_IN_POST").expect("missing MAX_LISTINGS_IN_POST").parse::<i32>().unwrap();
+    println!("Taking max {} listings.", max_to_take);
     let not_taken = std::cmp::max(0, (listings.len() as i32) - max_to_take);
-    let mut already_seen_authors: Vec<String> = Vec::new();
 
     for listing in listings.iter().take(max_to_take as usize) {
-        if already_seen_authors.contains(&listing.author) {
-            continue
-        }
-        already_seen_authors.push(listing.author.to_string());
-        if listing.slots.len() == 0 || listing.slots.iter().any(|x| x.available_jobs.len() == 0) {
-            continue
-        }
-
         let author = &listing.author;
         let role_icons_str = listing.slots.iter().map(|x| x.get_emoji_string()).collect::<Vec<String>>().join(" ");
         embed.field(author, role_icons_str, true);
