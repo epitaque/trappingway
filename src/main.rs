@@ -156,7 +156,7 @@ async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
 
 
 /// Displays FFXIV party finder listings in a discord message. Updates every 5 minutes.
-#[poise::command(slash_command, owners_only)]
+#[poise::command(slash_command, required_permissions = "KICK_MEMBERS")]
 async fn display_xivpfs(
     ctx: Context<'_>,
     #[description = "Channel"] channel: serenity::Channel,
