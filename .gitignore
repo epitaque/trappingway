@@ -4,3 +4,4 @@ database.sqlite
 notes.md
 database.sqlite-shm
 database.sqlite-wal
+.env

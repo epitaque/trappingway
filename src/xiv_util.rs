@@ -3,6 +3,7 @@ use std::fmt;
 
 #[derive(Debug)]
 #[derive(PartialEq)]
+#[derive(Clone)]
 pub enum Job {
     Gunbreaker,
     Paladin,
@@ -44,6 +45,7 @@ pub enum Role {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct PFListing {
     pub title: String,
     pub author: String,
@@ -58,6 +60,7 @@ pub struct PFListing {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Slot {
     pub available_jobs: Vec<Job>,
     pub filled: bool,

@@ -8,6 +8,9 @@ use poise::serenity_prelude as serenity;
 use futures::{Stream, StreamExt};
 use poise::command;
 use crate::serenity::http::Http;
+use regex::Regex;
+use lazy_static::lazy_static;
+use std::cmp;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -30,7 +33,7 @@ async fn autocomplete_duty(_ctx: Context<'_>, partial: String) -> impl Stream<It
         .map(|name| name.to_string())
 }
 
-fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PFListing>) -> serenity::builder::CreateEmbed {
+fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PFListing>) -> serenity::builder::CreateEmbed {    
     let mut embed = serenity::builder::CreateEmbed::default();
     embed.color(xiv_util::get_color_from_duty(&duty_name));
     embed.title(format!("{} - {}", duty_name, data_center));
@@ -66,13 +69,65 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     embed
 }
 
+#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Default)]
 struct MessageRow {
     message_id: String,
     channel_id: String,
     data_center: String,
     guild_id: String,
-    duty_name: String
+    duty_name: String,
+    allow_statics: Option<i64>
+}
+
+fn parse_time_remaining(last_updated: &str) -> i32 {
+    let time_remaining_str: String = last_updated.chars().filter(|c| c.is_digit(10)).collect();
+
+    let mut minutes_since_update = time_remaining_str.parse::<i32>().unwrap_or(0);
+    if last_updated.contains("hour") {
+        minutes_since_update = 60;
+    }
+    if last_updated.contains("seconds") {
+        minutes_since_update = 0;
+    }
+    minutes_since_update
+}
+
+fn filter_listings<'a>(message_row: &MessageRow, pf_listings: &'a Vec<xiv_util::PFListing>) -> Vec<&'a xiv_util::PFListing> {
+    lazy_static! {
+        // if this is a match, don't show listing
+        static ref RE: Regex = Regex::new(&std::env::var("DESCRIPTION_REGEX").unwrap_or(r".{3,32}#[0-9]{4}".to_string())).unwrap();
+    }
+    let min_minutes_since_update = (std::env::var("MIN_MINUTES_SINCE_UPDATE").unwrap_or("3".to_string())).parse::<i32>().unwrap(); // don't show pf's last updated more than 5 mins ago
+    let min_slots = (std::env::var("MIN_SLOTS").unwrap_or("5".to_string())).parse::<usize>().unwrap();
+    let message_allows_statics = if message_row.allow_statics.unwrap_or(1) == 1 { true } else { false };
+
+    let data_center = message_row.data_center.to_string();
+    let duty_name = message_row.duty_name.to_string();
+
+    let filtered_listings = pf_listings.iter()
+        .filter(|x| {
+            x.data_center == data_center 
+            && x.title == duty_name
+        });
+    let filtermax = filtered_listings.clone().map(|x| parse_time_remaining(&x.last_updated)).min().unwrap_or(5);
+    let max = cmp::min(cmp::max(filtermax, min_minutes_since_update), 15);
+    filtered_listings.filter(|x| {
+            let minutes_since_update = parse_time_remaining(&x.last_updated);
+            let is_static_ad = RE.is_match(&x.description) || x.slots.len() < min_slots;
+            
+            if is_static_ad {
+                println!("{:?} is classified as a static ad. Message allows statics: {}", x, message_allows_statics);
+            }
+
+            if minutes_since_update > max {
+                println!("{:?} is had too many minutes ({}) pass since last update. (max {})", x, minutes_since_update, max);
+            }
+
+            minutes_since_update <= max
+            && (message_allows_statics || !is_static_ad)
+        }).collect()
 }
 
 async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sync::Arc<Http>) -> Result<u32, Error> {
@@ -82,10 +137,8 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
     let message_id_str = message_row.message_id.to_string();
     let message_id = message_id_str.parse::<u64>().expect("Unable to parse channel id");        
     let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
-
     let data_center = message_row.data_center.to_string();
     let duty_name = message_row.duty_name.to_string();
-
     let message_result = http.get_message(channel_id, message_id).await;
     sw0.stop();
 
@@ -94,7 +147,7 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
             let mut sw1 = Stopwatch::start_new();
             let embed = {
                 let pf_listings = data.pf_listings.lock().unwrap();
-                let filtered_listings = pf_listings.iter().filter(|x| x.data_center == data_center && x.title == duty_name).collect();
+                let filtered_listings = filter_listings(message_row, &pf_listings);
                 get_embed(data_center, duty_name, filtered_listings)
             };
             sw1.stop();
@@ -121,7 +174,7 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
 
 async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<usize, Error> {
     println!("update_messages_rustfn_aux called.");
-    let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name FROM messages")
+    let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name, allow_statics FROM messages")
         .fetch_all(&data.database)
         .await
         .unwrap();
@@ -162,6 +215,7 @@ async fn display_xivpfs(
     #[description = "Channel"] channel: serenity::Channel,
     #[description = "Datacenter"] #[autocomplete = "autocomplete_datacenter"] data_center: String,
     #[description = "Duty"] #[autocomplete = "autocomplete_duty"] duty_name: String,
+    #[description = "Allow Statics"] allow_statics: bool,
 ) -> Result<(), Error> {
     let initial_message = ctx.say(format!("Adding PF listings display...")).await;
     let author_name = &ctx.author().name.to_string();
@@ -172,20 +226,19 @@ async fn display_xivpfs(
             if guild_channel.kind.name() != "text" {
                 format!("Can't post message, {} is not a text channel.", guild_channel.name())
             } else {
-                // guild_channel.send_message(cache_http: impl CacheHttp, f: F)
-                // guild_channel.say(ctx.discord().http.as_ref(), get_message(datacenter).await).await?;
                 let guild_name = ctx.guild().unwrap().name;
                 let guild_id = ctx.guild_id().unwrap().0.to_string();
                 println!("display_xivpfs player name: {}, duty_name: {}, guild name: {}", guild_name, duty_name, author_name);
+                let allow_statics_i = if allow_statics {1} else {0};
                 sqlx::query!("INSERT OR IGNORE INTO guilds(guild_id, guild_name) VALUES(?, ?)", guild_id, guild_name)
                     .fetch_all(&ctx.data().database)
                     .await
                     .unwrap();
                 
-                // let response2 = format!("Add guild result: {}:\n", guilds.len());
-                let embed = {
+
+                    let embed = {
                     let pf_listings = ctx.data().pf_listings.lock().unwrap();
-                    let filtered_listings = pf_listings.iter().filter(|x| x.data_center == data_center && x.title == duty_name).collect::<Vec<_>>();
+                    let filtered_listings = filter_listings(&MessageRow { data_center: data_center.to_string(), duty_name: duty_name.to_string(), allow_statics: Some(allow_statics_i), ..MessageRow::default() }, &pf_listings);
                     get_embed(data_center.to_string(), duty_name.to_string(), filtered_listings)
                 };
                 let channel_id = guild_channel.id;
@@ -193,7 +246,7 @@ async fn display_xivpfs(
                 let message_id = message.id.0.to_string();
                 let channel_id_str = channel_id.0.to_string();
                 let guild_id = ctx.guild_id().unwrap().0.to_string();
-                sqlx::query!("INSERT INTO messages(message_id, channel_id, guild_id, data_center, duty_name) VALUES(?, ?, ?, ?, ?)", message_id, channel_id_str, guild_id, data_center, duty_name)
+                sqlx::query!("INSERT INTO messages(message_id, channel_id, guild_id, data_center, duty_name, allow_statics) VALUES(?, ?, ?, ?, ?, ?)", message_id, channel_id_str, guild_id, data_center, duty_name, allow_statics_i)
                     .fetch_all(&ctx.data().database)
                     .await
                     .unwrap();

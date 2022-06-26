@@ -5,7 +5,7 @@ CREATE TABLE guilds (
 );
 
 CREATE TABLE messages (
-    message_id TEXT PRIMARY KEY,
+    message_id TEXT PRIMARY KEY NOT NULL,
     channel_id TEXT NOT NULL,
     data_center TEXT NOT NULL,
     guild_id TEXT NOT NULL,
