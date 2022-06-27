@@ -305,7 +305,7 @@ async fn init_bot() {
         .await
         .expect("Couldn't connect to database");
 
-    sqlx::migrate!("./migrations").run(&database).await.expect("Couldn't run database migrations");
+    //sqlx::migrate!("./migrations").run(&database).await.expect("Couldn't run database migrations");
 
     let pf_listings = Mutex::new(scraper_util::get_sample_listings().await);
 
