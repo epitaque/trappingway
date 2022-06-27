@@ -115,7 +115,7 @@ fn filter_listings<'a>(message_row: &MessageRow, pf_listings: &'a Vec<xiv_util::
     let max = cmp::min(cmp::max(filtermax, min_minutes_since_update), 15);
     filtered_listings.filter(|x| {
             let minutes_since_update = parse_time_remaining(&x.last_updated);
-            let is_static_ad = RE.is_match(&x.description) || x.slots.len() < min_slots;
+            let is_static_ad = RE.is_match(&x.description.replace("​", "")) || x.slots.len() < min_slots;
             
             if is_static_ad {
                 println!("{:?} is classified as a static ad. Message allows statics: {}", x, message_allows_statics);
