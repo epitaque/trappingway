@@ -8,7 +8,7 @@ Discord bot that displays FFXIV listings
 ```
 git clone git@github.com:epitaque/trappingway.git
 cd trappingway
-cargo install sqlx
+cargo install sqlx-cli
 
 IF ON WINDOWS POWERSHELL
 $env:DISCORD_TOKEN="<your discord api token>"
@@ -25,6 +25,7 @@ sqlx migrate run
 
 cargo install
 cargo build --release
-./target/release/ffxiv_pf_bot<.exe if on winodws
+./target/release/ffxiv_pf_bot<.exe if on windows
+```
 4. In your discord server, type @(your bot name) register. Click one of the green buttons. This is to register the slash command, `display_xivpfs`.
 6. Type /display_xivpfs and some command parameters should autocomplete for you.
