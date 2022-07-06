@@ -25,7 +25,7 @@ sqlx migrate run
 
 cargo install
 cargo build --release
-./target/release/ffxiv_pf_bot<.exe if on windows
+./target/release/ffxiv_pf_bot<.exe if on windows>
 ```
 4. In your discord server, type @(your bot name) register. Click one of the green buttons. This is to register the slash command, `display_xivpfs`.
 6. Type /display_xivpfs and some command parameters should autocomplete for you.
