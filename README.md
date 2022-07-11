@@ -37,7 +37,7 @@ cargo build --release
 ```
 5. In your discord server, type @(your bot name) register. Click one of the green buttons. This is to register the slash command, `display_xivpfs`.
 6. Type /display_xivpfs and some command parameters should autocomplete for you.
-7. Please consider not changing the update interval, as the owner of xivpf.com probably doesn't want a bunch of bots scraping on a frequent interval.
+7. Please consider not changing the update interval, as the owner of xivpf.com probably doesn't want a bunch of bots scraping on a frequent interval. They told me 5 minutes was an acceptable interval.
 
 ## Other projects
 Looks like Veraticus made a discord bot that does a similar thing in Go. [Link](https://github.com/Veraticus/trappingway).
