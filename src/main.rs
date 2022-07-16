@@ -38,7 +38,6 @@ fn get_embed(data_center: String, duty_name: String, listings: Vec<&xiv_util::PF
     embed.color(xiv_util::get_color_from_duty(&duty_name));
     embed.title(format!("{} - {}", duty_name, data_center));
     let max_to_take = std::env::var("MAX_LISTINGS_IN_POST").expect("missing MAX_LISTINGS_IN_POST").parse::<i32>().unwrap();
-    println!("Taking max {} listings.", max_to_take);
     let not_taken = std::cmp::max(0, (listings.len() as i32) - max_to_take);
 
     for listing in listings.iter().take(max_to_take as usize) {
@@ -117,13 +116,13 @@ fn filter_listings<'a>(message_row: &MessageRow, pf_listings: &'a Vec<xiv_util::
             let minutes_since_update = parse_time_remaining(&x.last_updated);
             let is_static_ad = RE.is_match(&x.description.replace("​", "")) || x.slots.len() < min_slots;
             
-            if is_static_ad {
-                println!("{:?} is classified as a static ad. Message allows statics: {}", x, message_allows_statics);
-            }
+            // if is_static_ad {
+            //     println!("{:?} is classified as a static ad. Message allows statics: {}", x, message_allows_statics);
+            // }
 
-            if minutes_since_update > max {
-                println!("{:?} is had too many minutes ({}) pass since last update. (max {})", x, minutes_since_update, max);
-            }
+            // if minutes_since_update > max {
+            //     println!("{:?} is had too many minutes ({}) pass since last update. (max {})", x, minutes_since_update, max);
+            // }
 
             minutes_since_update <= max
             && (message_allows_statics || !is_static_ad)
@@ -173,7 +172,6 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
 }
 
 async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<usize, Error> {
-    println!("update_messages_rustfn_aux called.");
     let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name, allow_statics FROM messages")
         .fetch_all(&data.database)
         .await
@@ -186,19 +184,17 @@ async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> 
         update_message(&message_row, data, Arc::clone(&http)).await?;
     }
 
-    println!("Updated {} messages. sw1: {}", update_count, sw1.elapsed_ms());
+    // println!("Updated {} messages. sw1: {}", update_count, sw1.elapsed_ms());
 
     Ok(update_count)
 }
 
 async fn update_messages_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>, http: std::sync::Arc<Http>) -> Result<usize, Error> {
-    println!("update_messages_rustfn called.");
     update_messages_rustfn_aux(framework.user_data().await, http).await
 }
 
 #[command(slash_command, owners_only, hide_in_help)]
 async fn update_messages(ctx: Context<'_>) -> Result<(), Error> {
-    println!("update_messages called.");
     let initial_message = ctx.say("Updating messages...").await;
     let mut sw = Stopwatch::start_new();
     let update_count = update_messages_rustfn_aux(&ctx.data(), Arc::clone(&ctx.discord().http)).await?;
@@ -269,7 +265,6 @@ async fn register(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 async fn update_xivpfs_rustfn_aux(data: &Data) -> Result<(), Error> {
-    println!("update_xivpfs_rustfn_aux called.");
     let html = reqwest::get("https://xivpf.com/listings")
         .await?
         .text()
@@ -282,7 +277,6 @@ async fn update_xivpfs_rustfn_aux(data: &Data) -> Result<(), Error> {
 
 
 async fn update_xivpfs_rustfn(framework: Arc<poise::Framework<Data, std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync>>>) -> Result<(), Error> {
-    println!("update_xivpfs_rustfn called.");
     update_xivpfs_rustfn_aux(framework.user_data().await).await?;
     Ok(())
 }
@@ -338,7 +332,6 @@ async fn init_bot() {
 
         loop {
             interval.tick().await;
-            println!("Update ticked.");
             update_xivpfs_rustfn(Arc::clone(&framework)).await.expect("Couldn't update_xivpfs_rustfn");
             update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await.expect("Couldn't update_messages_rustfn");
         }
