@@ -157,7 +157,9 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
 
 
             match result {
-                Ok(_a) => { println!("Successfully edited message, sw0 time: {}, sw1 time: {}, sw2 time: {}", sw0.elapsed_ms(), sw1.elapsed_ms(), sw2.elapsed_ms()); }
+                Ok(_a) => { 
+                    //println!("Successfully edited message, sw0 time: {}, sw1 time: {}, sw2 time: {}", sw0.elapsed_ms(), sw1.elapsed_ms(), sw2.elapsed_ms()); 
+            }
                 Err(e) => { println!("Error editing message: {}.", e); }
             }
         }
@@ -332,8 +334,14 @@ async fn init_bot() {
 
         loop {
             interval.tick().await;
-            update_xivpfs_rustfn(Arc::clone(&framework)).await.expect("Couldn't update_xivpfs_rustfn");
-            update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await.expect("Couldn't update_messages_rustfn");
+            match update_xivpfs_rustfn(Arc::clone(&framework)).await {
+                Ok(()) => {}
+                Err(e) => {println!("Couldn't update_xivpfs_rustfn {:?}", e)}
+            }
+            match update_messages_rustfn(Arc::clone(&framework), Arc::clone(&http)).await {
+                Ok(sz) => {}
+                Err(e) => {println!("Couldn't update_messages_rustfn {:?}", e)}
+            }
         }
     });
 
