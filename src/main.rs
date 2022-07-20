@@ -165,6 +165,14 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
         }
         Err(e) => {
             println!("Error getting message: {}. Couldn't find message for data center {} duty {}, so removing from DB.", e, &data_center, &duty_name);
+            if let serenity::SerenityError::Http(http_error) = e {
+                if let serenity::HttpError::UnsuccessfulRequest(req_err) = *http_error {
+                    println!("Status code: {}", req_err.status_code);
+                    if req_err.status_code == 403 { // missing access
+
+                    }
+                }
+            }
             sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
                 .fetch_all(&data.database)
                 .await.expect("Unable to remove that row from DB");
@@ -333,7 +341,6 @@ async fn init_bot() {
         let http = Arc::new(serenity::http::Http::new(&token_2));
 
         loop {
-            interval.tick().await;
             match update_xivpfs_rustfn(Arc::clone(&framework)).await {
                 Ok(()) => {}
                 Err(e) => {println!("Couldn't update_xivpfs_rustfn {:?}", e)}
@@ -342,6 +349,7 @@ async fn init_bot() {
                 Ok(sz) => {}
                 Err(e) => {println!("Couldn't update_messages_rustfn {:?}", e)}
             }
+            interval.tick().await;
         }
     });
 

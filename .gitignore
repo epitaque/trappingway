@@ -5,3 +5,4 @@ notes.md
 database.sqlite-shm
 database.sqlite-wal
 .env
+database.sqlite.old
