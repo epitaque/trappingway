@@ -164,18 +164,18 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
             }
         }
         Err(e) => {
-            println!("Error getting message: {}. Couldn't find message for data center {} duty {}, so removing from DB.", e, &data_center, &duty_name);
+            println!("Error getting message ({}): {}. Couldn't find message for data center {} duty {}.", message_id, e, &data_center, &duty_name);
             if let serenity::SerenityError::Http(http_error) = e {
                 if let serenity::HttpError::UnsuccessfulRequest(req_err) = *http_error {
                     println!("Status code: {}", req_err.status_code);
-                    if req_err.status_code == 403 { // missing access
-
+                    if req_err.status_code == 403  || req_err.status_code == 404 { // missing access or not found
+                        println!("Removing from db because it's 404 or 403.");
+                        sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
+                        .fetch_all(&data.database)
+                        .await.expect("Unable to remove that row from DB");
                     }
                 }
             }
-            sqlx::query!("DELETE FROM messages WHERE message_id=?", message_id_str)
-                .fetch_all(&data.database)
-                .await.expect("Unable to remove that row from DB");
         }
     }
     Ok(1)

@@ -6,3 +6,6 @@ database.sqlite-shm
 database.sqlite-wal
 .env
 database.sqlite.old
+*.sqlite*
+*.sql
+ignored/
