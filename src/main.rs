@@ -28,7 +28,8 @@ async fn autocomplete_datacenter(_ctx: Context<'_>, partial: String) -> impl Str
 }
 
 async fn autocomplete_duty(_ctx: Context<'_>, partial: String) -> impl Stream<Item = String> {
-    futures::stream::iter(&["The Weapon's Refrain (Ultimate)", "The Unending Coil of Bahamut (Ultimate)", "The Epic of Alexander (Ultimate)", "Dragonsong's Reprise (Ultimate)"])
+    futures::stream::iter(&["The Weapon's Refrain (Ultimate)", "The Unending Coil of Bahamut (Ultimate)", "The Epic of Alexander (Ultimate)", "Dragonsong's Reprise (Ultimate)",
+        "Abyssos: The Fifth Circle (Savage)", "Abyssos: The Sixth Circle (Savage)", "Abyssos: The Seventh Circle (Savage)", "Abyssos: The Eighth Circle (Savage)"])
         .filter(move |name| futures::future::ready(name.starts_with(&partial)))
         .map(|name| name.to_string())
 }
@@ -77,7 +78,9 @@ struct MessageRow {
     data_center: String,
     guild_id: String,
     duty_name: String,
-    allow_statics: Option<i64>
+    is_news: Option<i64>,
+    allow_statics: Option<i64>,
+    description_regex_filter: Option<String>
 }
 
 fn parse_time_remaining(last_updated: &str) -> i32 {
@@ -93,39 +96,55 @@ fn parse_time_remaining(last_updated: &str) -> i32 {
     minutes_since_update
 }
 
-fn filter_listings<'a>(message_row: &MessageRow, pf_listings: &'a Vec<xiv_util::PFListing>) -> Vec<&'a xiv_util::PFListing> {
+fn filter_listings<'a>(message_row: &MessageRow, pf_listings: &'a Vec<xiv_util::PFListing>, description_regex_filter: &Option<String>) -> Vec<&'a xiv_util::PFListing> {
     lazy_static! {
         // if this is a match, don't show listing
         static ref RE: Regex = Regex::new(&std::env::var("DESCRIPTION_REGEX").unwrap_or(r".{3,32}#[0-9]{4}".to_string())).unwrap();
     }
-    let min_minutes_since_update = (std::env::var("MIN_MINUTES_SINCE_UPDATE").unwrap_or("3".to_string())).parse::<i32>().unwrap(); // don't show pf's last updated more than 5 mins ago
+    let min_minutes_since_update = (std::env::var("MIN_MINUTES_SINCE_UPDATE").unwrap_or("5".to_string())).parse::<i32>().unwrap(); // don't show pf's last updated more than 5 mins ago
     let min_slots = (std::env::var("MIN_SLOTS").unwrap_or("5".to_string())).parse::<usize>().unwrap();
     let message_allows_statics = if message_row.allow_statics.unwrap_or(1) == 1 { true } else { false };
 
     let data_center = message_row.data_center.to_string();
     let duty_name = message_row.duty_name.to_string();
 
-    let filtered_listings = pf_listings.iter()
+    let mut filtered_listings = pf_listings.iter()
         .filter(|x| {
+            let is_static_ad = RE.is_match(&x.description.replace("​", "")) || x.slots.len() < min_slots;
+
+            // condition 1: data center must match
             x.data_center == data_center 
+
+            // condition 2: title must match
             && x.title == duty_name
-        });
+
+            // condition 3: user description filter regex must not match
+            && match description_regex_filter {
+                Some(filter) => { 
+                    let user_regex = Regex::new(&filter);
+                    match user_regex {
+                        Ok(re) => {
+                            re.is_match(&x.description.replace("​", ""))
+                        }
+                        Err(err) => {
+                            println!("Somehow an invalid user regex slipped through. Err. {}", err);
+                            true
+                        }
+                    }
+                }
+                None => true
+            }
+
+            // condition 4: message allows statics or it's not a static ad
+            && (message_allows_statics || !is_static_ad)
+    });
+    
+
     let filtermax = filtered_listings.clone().map(|x| parse_time_remaining(&x.last_updated)).min().unwrap_or(5);
     let max = cmp::min(cmp::max(filtermax, min_minutes_since_update), 15);
     filtered_listings.filter(|x| {
             let minutes_since_update = parse_time_remaining(&x.last_updated);
-            let is_static_ad = RE.is_match(&x.description.replace("​", "")) || x.slots.len() < min_slots;
-            
-            // if is_static_ad {
-            //     println!("{:?} is classified as a static ad. Message allows statics: {}", x, message_allows_statics);
-            // }
-
-            // if minutes_since_update > max {
-            //     println!("{:?} is had too many minutes ({}) pass since last update. (max {})", x, minutes_since_update, max);
-            // }
-
             minutes_since_update <= max
-            && (message_allows_statics || !is_static_ad)
         }).collect()
 }
 
@@ -138,6 +157,8 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
     let channel_id = message_row.channel_id.parse::<u64>().expect("Unable to parse channel id");
     let data_center = message_row.data_center.to_string();
     let duty_name = message_row.duty_name.to_string();
+    let is_news = message_row.is_news.to_owned();
+    let filter_regex = &message_row.description_regex_filter;
     let message_result = http.get_message(channel_id, message_id).await;
     sw0.stop();
 
@@ -146,7 +167,7 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
             let mut sw1 = Stopwatch::start_new();
             let embed = {
                 let pf_listings = data.pf_listings.lock().unwrap();
-                let filtered_listings = filter_listings(message_row, &pf_listings);
+                let filtered_listings = filter_listings(message_row, &pf_listings, &filter_regex);
                 get_embed(data_center, duty_name, filtered_listings)
             };
             sw1.stop();
@@ -182,7 +203,7 @@ async fn update_message(message_row_ref: &MessageRow, data: &Data, http: std::sy
 }
 
 async fn update_messages_rustfn_aux(data: &Data, http: std::sync::Arc<Http>) -> Result<usize, Error> {
-    let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name, allow_statics FROM messages")
+    let messages = sqlx::query_as!(MessageRow, "SELECT message_id, channel_id, guild_id, data_center, duty_name, allow_statics, is_news, description_regex_filter FROM messages")
         .fetch_all(&data.database)
         .await
         .unwrap();
@@ -222,6 +243,7 @@ async fn display_xivpfs(
     #[description = "Datacenter"] #[autocomplete = "autocomplete_datacenter"] data_center: String,
     #[description = "Duty"] #[autocomplete = "autocomplete_duty"] duty_name: String,
     #[description = "Allow Statics"] allow_statics: bool,
+    #[description = "Description filter regex (if pf description contains match, it will be included in post)"] filter_regex: Option<String>
 ) -> Result<(), Error> {
     let initial_message = ctx.say(format!("Adding PF listings display...")).await;
     let author_name = &ctx.author().name.to_string();
@@ -229,8 +251,9 @@ async fn display_xivpfs(
 
     let response = match channel.guild() {
         Some(guild_channel) => {
-            if guild_channel.kind.name() != "text" {
-                format!("Can't post message, {} is not a text channel.", guild_channel.name())
+            println!("guild channel kind: {}", guild_channel.kind.name());
+            if guild_channel.kind.name() != "text" && guild_channel.kind.name() != "news" {
+                format!("Can't post message, {} is not a text channel. It is a {} channel.", guild_channel.name(), guild_channel.kind.name())
             } else {
                 let guild_name = ctx.guild().unwrap().name;
                 let guild_id = ctx.guild_id().unwrap().0.to_string();
@@ -244,7 +267,7 @@ async fn display_xivpfs(
 
                     let embed = {
                     let pf_listings = ctx.data().pf_listings.lock().unwrap();
-                    let filtered_listings = filter_listings(&MessageRow { data_center: data_center.to_string(), duty_name: duty_name.to_string(), allow_statics: Some(allow_statics_i), ..MessageRow::default() }, &pf_listings);
+                    let filtered_listings = filter_listings(&MessageRow { data_center: data_center.to_string(), duty_name: duty_name.to_string(), allow_statics: Some(allow_statics_i), ..MessageRow::default() }, &pf_listings, &filter_regex);
                     get_embed(data_center.to_string(), duty_name.to_string(), filtered_listings)
                 };
                 let channel_id = guild_channel.id;
@@ -252,7 +275,9 @@ async fn display_xivpfs(
                 let message_id = message.id.0.to_string();
                 let channel_id_str = channel_id.0.to_string();
                 let guild_id = ctx.guild_id().unwrap().0.to_string();
-                sqlx::query!("INSERT INTO messages(message_id, channel_id, guild_id, data_center, duty_name, allow_statics) VALUES(?, ?, ?, ?, ?, ?)", message_id, channel_id_str, guild_id, data_center, duty_name, allow_statics_i)
+                let is_news = guild_channel.kind.name() == "news";
+                sqlx::query!("INSERT INTO messages(message_id, channel_id, guild_id, data_center, duty_name, allow_statics, is_news, description_regex_filter) VALUES(?, ?, ?, ?, ?, ?, ?, ?)", message_id, channel_id_str, guild_id, data_center, duty_name, allow_statics_i, 
+                    is_news, filter_regex)
                     .fetch_all(&ctx.data().database)
                     .await
                     .unwrap();
