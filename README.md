@@ -3,7 +3,7 @@ Discord bot that displays FFXIV listings. Goal is to display information to make
 
 ![image](https://user-images.githubusercontent.com/7350617/178365515-c3431fbe-bd8b-47ac-9d07-f60624ed8b1d.png)
 
-If you have a large discord server you can send a dm to Epitaque#3378, and I'll send you the bot invite link. Unfortunately, due to discord ratelimits, I can't let everyone add this bot to their server. However, you can make a clone by following the below instructions.
+You can make a clone by following the below instructions.
 
 ## How this works
 It scrapes [https://xivpf.com/listings](https://xivpf.com/listings) for current listings. xivpf gets its data from people who have the Remote Party Finder plugin on Dalamud.
